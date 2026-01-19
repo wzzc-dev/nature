@@ -82,6 +82,11 @@ int64_t type_sizeof(type_t t) {
         return size;
     }
 
+    if (t.kind == TYPE_ENUM) {
+        // Enum size is the size of its underlying type
+        return type_sizeof(t.enum_->underlying_type);
+    }
+
     if (t.kind == TYPE_ARR) {
         int64_t element_size = type_sizeof(t.array->element_type);
         return t.array->length * element_size;
@@ -117,6 +122,11 @@ bool type_can_size(type_t t) {
         return true;
     }
 
+    if (t.kind == TYPE_ENUM) {
+        // Enum can be sized if its underlying type can be sized
+        return type_can_size(t.enum_->underlying_type);
+    }
+
     if (t.kind == TYPE_ARR) {
         return type_can_size(t.array->element_type);
     }
@@ -129,6 +139,11 @@ int64_t type_alignof(type_t t) {
 
     if (t.kind == TYPE_STRUCT) {
         return type_struct_alignof(t.struct_);
+    }
+
+    if (t.kind == TYPE_ENUM) {
+        // Enum alignment is the alignment of its underlying type
+        return type_alignof(t.enum_->underlying_type);
     }
 
     if (t.kind == TYPE_ARR) {

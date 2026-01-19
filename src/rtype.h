@@ -90,6 +90,16 @@ static inline int64_t type_hash(type_t t) {
         return hash_string(str);
     }
 
+    if (t.kind == TYPE_ENUM) {
+        char *str = dsprintf("enum");
+        if (t.ident) {
+            str = str_connect(str, t.ident);
+        } else {
+            str = str_connect(str, dsprintf(".%ld", type_hash(t.enum_->underlying_type)));
+        }
+        return hash_string(str);
+    }
+
     if (t.kind == TYPE_FN) {
         char *str = dsprintf("fn.%ld", type_hash(t.fn->return_type));
         for (int i = 0; i < t.fn->param_types->length; ++i) {
@@ -712,6 +722,16 @@ static inline rtype_t reflect_type(type_t t) {
             break;
         case TYPE_STRUCT:
             rtype = rtype_struct(t);
+            break;
+        case TYPE_ENUM:
+            rtype = reflect_type(t.enum_->underlying_type);
+            // Store the underlying type kind in last_ptr for runtime use
+            rtype.last_ptr = t.enum_->underlying_type.kind;
+            rtype.kind = TYPE_ENUM;
+            rtype.hash = type_hash(t);
+            // For enum types, heap_size should equal stack_size (size of underlying type)
+            // This ensures that enum variables are allocated correctly
+            rtype.heap_size = rtype.stack_size;
             break;
         case TYPE_FN:
             rtype = rtype_fn(t);

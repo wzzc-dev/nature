@@ -1,0 +1,196 @@
+=== test_enum_basic
+--- main.n
+type color = enum {
+    RED,
+    GREEN,
+    BLUE,
+}
+
+fn main() {
+    var c = color.RED
+    println(c)
+    assert(c == 0)
+
+    var c2 = color.GREEN
+    println(c2)
+    assert(c2 == 1)
+
+    var c3 = color.BLUE
+    println(c3)
+    assert(c3 == 2)
+}
+
+--- output.txt
+0
+1
+2
+
+=== test_enum_custom_value
+--- main.n
+type color = enum {
+    RED = 1,
+    GREEN,
+    BLUE,
+}
+
+fn main() {
+    var c = color.RED
+    println(c)
+    assert(c == 1)
+
+    var c2 = color.GREEN
+    println(c2)
+    assert(c2 == 2)
+
+    var c3 = color.BLUE
+    println(c3)
+    assert(c3 == 3)
+}
+
+--- output.txt
+1
+2
+3
+
+=== test_enum_string
+--- main.n
+type colorWithValues = enum: string {
+    ORANGE = "orange",
+    PURPLE = "purple",
+    YELLOW = "yellow",
+}
+
+fn main() {
+    var c = colorWithValues.ORANGE
+    println(c)
+    assert(c == "orange")
+
+    var c2 = colorWithValues.PURPLE
+    println(c2)
+    assert(c2 == "purple")
+
+    var c3 = colorWithValues.YELLOW
+    println(c3)
+    assert(c3 == "yellow")
+}
+
+--- output.txt
+orange
+purple
+yellow
+
+=== test_enum_method
+--- main.n
+type color = enum {
+    RED,
+    GREEN,
+    BLUE,
+}
+
+fn color.to_string(): string {
+  match self {
+    color.RED -> 'red'
+    color.GREEN -> 'green'
+    color.BLUE -> 'blue'
+  }
+}
+
+fn main() {
+    var c = color.RED
+    println(c.to_string())
+}
+
+--- output.txt
+red
+
+=== test_enum_comparison
+--- main.n
+type color = enum {
+    RED,
+    GREEN,
+    BLUE,
+}
+
+fn main() {
+    var c = color.RED
+    assert(c == color.RED)
+    assert(c != color.GREEN)
+    assert(c < color.GREEN)
+    assert(color.BLUE > color.GREEN)
+    println("comparison passed")
+}
+
+--- output.txt
+comparison passed
+
+=== test_enum_assignment
+--- main.n
+type color = enum {
+    RED,
+    GREEN,
+    BLUE,
+}
+
+fn main() {
+    var c = color.RED
+    var c2 = c
+    println(c2)
+    assert(c2 == color.RED)
+
+    c2 = color.GREEN
+    println(c2)
+    assert(c2 == color.GREEN)
+}
+
+--- output.txt
+0
+1
+
+=== test_enum_in_struct
+--- main.n
+type color = enum {
+    RED,
+    GREEN,
+    BLUE,
+}
+
+type item = struct {
+    color c
+    string name
+}
+
+fn main() {
+    var i = item{
+        c: color.RED,
+        name: "apple",
+    }
+    println(i.c)
+    assert(i.c == color.RED)
+    assert(i.name == "apple")
+}
+
+--- output.txt
+0
+
+=== test_enum_in_array
+--- main.n
+type color = enum {
+    RED,
+    GREEN,
+    BLUE,
+}
+
+fn main() {
+    var colors = [color.RED, color.GREEN, color.BLUE]
+    println(colors[0])
+    println(colors[1])
+    println(colors[2])
+    assert(colors[0] == color.RED)
+    assert(colors[1] == color.GREEN)
+    assert(colors[2] == color.BLUE)
+}
+
+--- output.txt
+0
+1
+2

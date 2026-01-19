@@ -723,6 +723,86 @@ static ast_stmt_t *parser_typedef_stmt(module_t *m) {
         return result;
     }
 
+    if (parser_consume(m, TOKEN_ENUM)) {
+        type_enum_t *type_enum = NEW(type_enum_t);
+        type_enum->variants = ct_list_new(sizeof(enum_variant_t));
+        type_enum->ident = typedef_stmt->ident; // Set the ident field
+
+        // Check if enum has a type annotation (e.g., enum: string { ... })
+        if (parser_consume(m, TOKEN_COLON)) {
+            type_enum->underlying_type = parser_type(m);
+        } else {
+            // Default to int type
+            type_enum->underlying_type = type_kind_new(TYPE_INT);
+        }
+
+        struct sc_map_s64 exists = {0};
+        sc_map_init_s64(&exists, 0, 0);
+
+        parser_must(m, TOKEN_LEFT_CURLY);
+
+        int64_t auto_value = 0;
+        while (!parser_consume(m, TOKEN_RIGHT_CURLY)) {
+            enum_variant_t variant = {0};
+
+            // Parse variant name
+            variant.name = parser_must(m, TOKEN_IDENT)->literal;
+
+            // Check for duplicate variant names
+            if (sc_map_get_s64(&exists, variant.name)) {
+                PARSER_ASSERTF(false, "enum variant name '%s' exists", variant.name);
+            }
+            sc_map_put_s64(&exists, variant.name, 1);
+
+            variant.type = type_enum->underlying_type;
+            variant.index = auto_value;
+            variant.has_value = false;
+            variant.value = NULL;
+
+            // Check if variant has explicit value
+            if (parser_consume(m, TOKEN_EQUAL)) {
+                variant.has_value = true;
+                ast_expr_t *temp_expr = expr_new_ptr(m);
+                *temp_expr = parser_expr(m);
+                variant.value = temp_expr;
+
+                // For int enums, try to extract the value for auto-increment
+                if (variant.type.kind == TYPE_INT || variant.type.kind == TYPE_UINT ||
+                    variant.type.kind == TYPE_INT64 || variant.type.kind == TYPE_UINT64) {
+                    if (temp_expr->assert_type == AST_EXPR_LITERAL) {
+                        ast_literal_t *literal = temp_expr->value;
+                        if (literal->kind == TYPE_INT || literal->kind == TYPE_UINT ||
+                            literal->kind == TYPE_INT64 || literal->kind == TYPE_UINT64) {
+                            auto_value = strtoll(literal->value, NULL, 0);
+                        }
+                    }
+                }
+            }
+
+            ct_list_push(type_enum->variants, &variant);
+            auto_value++;
+
+            // Comma is optional
+            parser_consume(m, TOKEN_COMMA);
+        }
+
+        type_t t = {
+                .status = REDUCTION_STATUS_UNDO,
+                .line = parser_peek(m)->line,
+                .column = parser_peek(m)->column,
+                .ident = type_enum->ident,
+                .args = NULL,
+                .ident_kind = 0,
+        };
+        t.kind = TYPE_ENUM;
+        t.enum_ = type_enum;
+
+        typedef_stmt->type_expr = t;
+        m->parser_type_params_table = NULL;
+
+        return result;
+    }
+
     if (parser_consume(m, TOKEN_INTERFACE)) {
         type_interface_t *type_interface = NEW(type_interface_t);
         type_interface->elements = ct_list_new(sizeof(type_t));
@@ -1070,6 +1150,7 @@ static ast_expr_t parser_unary(module_t *m) {
         if (parser_is(m, TOKEN_LITERAL_INT)) {
             token_t *int_token = parser_advance(m);
             ast_literal_t *literal = NEW(ast_literal_t);
+            literal->enum_variant_name = NULL;
             literal->kind = TYPE_INT;
             literal->value = str_connect("-", int_token->literal);
             result.assert_type = AST_EXPR_LITERAL;
@@ -1080,6 +1161,7 @@ static ast_expr_t parser_unary(module_t *m) {
         if (parser_is(m, TOKEN_LITERAL_FLOAT)) {
             token_t *float_token = parser_advance(m);
             ast_literal_t *literal = NEW(ast_literal_t);
+            literal->enum_variant_name = NULL;
             literal->kind = TYPE_FLOAT;
             literal->value = str_connect("-", float_token->literal);
             result.assert_type = AST_EXPR_LITERAL;
@@ -1241,6 +1323,7 @@ static ast_expr_t parser_literal(module_t *m) {
     literal_expr->kind = token_to_kind[literal_token->type];
     literal_expr->value = literal_token->literal; // 具体数值
     literal_expr->len = literal_token->length;
+    literal_expr->enum_variant_name = NULL;
 
     result.assert_type = AST_EXPR_LITERAL;
     result.value = literal_expr;
@@ -3293,9 +3376,17 @@ static ast_expr_t parser_match_expr(module_t *m) {
             handle_body = parser_body(m, true);
         } else {
             slice_t *stmt_list = slice_new();
+            // Handle the case where user writes "-> return expr" or just "-> expr"
+            ast_expr_t return_expr;
+            if (parser_is(m, TOKEN_RETURN)) {
+                parser_advance(m);
+                return_expr = parser_expr(m);
+            } else {
+                return_expr = parser_expr(m);
+            }
             ast_stmt_t *stmt = stmt_new(m);
             ast_ret_stmt_t *s = NEW(ast_ret_stmt_t);
-            s->expr = parser_expr(m);
+            s->expr = return_expr;
             stmt->value = s;
             stmt->assert_type = AST_STMT_RET;
             slice_push(stmt_list, stmt);

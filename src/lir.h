@@ -891,7 +891,10 @@ static inline lir_op_t *lir_call(char *name, lir_operand_t *result, int arg_coun
 static inline lir_op_t *lir_stack_alloc(closure_t *c, type_t t, lir_operand_t *dst_operand) {
     module_t *m = c->module;
     assert(dst_operand->assert_type == LIR_OPERAND_VAR);
-    assert(is_stack_ref_big_type(t));
+    
+    // Special handling for enum types with string underlying types
+    bool is_enum_with_string = (t.kind == TYPE_ENUM && t.enum_->underlying_type.kind == TYPE_STRING);
+    assert(is_stack_ref_big_type(t) || is_enum_with_string);
 
     int64_t size = type_sizeof(t);
     if (size == 0) {

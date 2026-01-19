@@ -113,6 +113,47 @@ static void print_arg(n_union_t *arg) {
         VOID write(STDOUT_FILENO, raw, strlen(raw));
         return;
     }
+    if (arg->rtype->kind == TYPE_ENUM) {
+        // Enum types use the underlying type for printing
+        // The underlying type kind is stored in last_ptr
+        type_kind underlying_kind = (type_kind) arg->rtype->last_ptr;
+
+        // Handle string enum values
+        if (underlying_kind == TYPE_STRING) {
+            n_string_t *s = arg->value.ptr_value;
+            assert(s && "[runtime.print_arg] string is null");
+ 
+            DEBUGF("[runtime.print_arg] string=%p, length=%lu, data=%p, len=%lu, cap=%lu, hash=%ld, element_size=%ld",
+               s, s->length, s->data, s->length, s->capacity, s->hash, s->element_size);
+
+            if (s->length == 0) {// 什么也不需要输出
+                DEBUGF("[runtime.print_arg] string length is 0 not write, ");
+                return;
+            }
+            VOID write(STDOUT_FILENO, s->data, s->length);
+            return;
+        }
+
+        // Handle integer enum values
+        switch (arg->rtype->heap_size) {
+            case 1: // i8 or u8
+            case 2: // i16 or u16
+            case 4: // i32 or u32
+                {
+                    int n = sprintf(sprint_buf, "%d", arg->value.i32_value);
+                    VOID write(STDOUT_FILENO, sprint_buf, n);
+                }
+                break;
+            case 8: // i64 or u64
+            default:
+                {
+                    int n = sprintf(sprint_buf, "%lld", arg->value.i64_value);
+                    VOID write(STDOUT_FILENO, sprint_buf, n);
+                }
+                break;
+        }
+        return;
+    }
 
     // 其他所有类型都打印 ptr 地址
     int n = sprintf(sprint_buf, "%p", arg->value.ptr_value);

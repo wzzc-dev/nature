@@ -160,6 +160,7 @@ static string type_kind_str[] = {
         [TYPE_VOID] = "void",
         [TYPE_UNKNOWN] = "unknown",
         [TYPE_STRUCT] = "struct", // ast_struct_decl
+        [TYPE_ENUM] = "enum", // enum declaration
         [TYPE_IDENT] = "ident",
         [TYPE_COROUTINE_T] = "coroutine_t",
         [TYPE_CHAN] = "chan",
@@ -262,6 +263,8 @@ typedef struct type_struct_t type_struct_t; // 目前只有 string
 
 typedef struct type_fn_t type_fn_t;
 
+typedef struct type_enum_t type_enum_t;
+
 // 类型的描述信息，无论是否还原，类型都会在这里呈现
 typedef struct type_t {
     char *import_as; // 可能为 null, foo.car 时， foo 就是 module_ident
@@ -282,6 +285,7 @@ typedef struct type_t {
         type_ptr_t *ptr;
         type_union_t *union_;
         type_interface_t *interface;
+        type_enum_t *enum_;
     };
     type_kind kind;
 
@@ -384,6 +388,20 @@ typedef struct {
 struct type_struct_t {
     char *ident;
     list_t *properties; // struct_property_t
+};
+
+typedef struct {
+    type_t type; // Variant type (int, string, etc.)
+    char *name; // Variant name (e.g., RED, GREEN, BLUE)
+    void *value; // ast_expr_t, optional explicit value (e.g., 1, "orange")
+    int64_t index; // Index in the enum (0, 1, 2, ...)
+    bool has_value; // Whether the variant has an explicit value
+} enum_variant_t;
+
+struct type_enum_t {
+    char *ident;
+    list_t *variants; // enum_variant_t
+    type_t underlying_type; // The underlying type (int, string, etc.)
 };
 
 /**
@@ -741,11 +759,11 @@ static inline bool is_stack_alloc_type(type_t t) {
 static inline bool is_impl_builtin_type(type_kind kind) {
     return is_number(kind) || kind == TYPE_BOOL || kind == TYPE_STRING ||
            kind == TYPE_MAP || kind == TYPE_SET || kind == TYPE_VEC || kind == TYPE_CHAN ||
-           kind == TYPE_STRING || kind == TYPE_COROUTINE_T;
+           kind == TYPE_STRING || kind == TYPE_COROUTINE_T || kind == TYPE_ENUM;
 }
 
 static inline bool is_stack_impl(type_kind kind) {
-    return is_number(kind) || kind == TYPE_BOOL || kind == TYPE_STRUCT || kind == TYPE_ARR;
+    return is_number(kind) || kind == TYPE_BOOL || kind == TYPE_STRUCT || kind == TYPE_ARR || kind == TYPE_ENUM;
 }
 
 static inline bool is_gc_alloc(type_kind kind) {
@@ -795,7 +813,7 @@ static inline bool is_map_set_key_type(type_kind kind) {
 }
 
 static inline bool is_complex_type(type_t t) {
-    return t.kind == TYPE_STRUCT || t.kind == TYPE_MAP || t.kind == TYPE_VEC || t.kind == TYPE_CHAN ||
+    return t.kind == TYPE_STRUCT || t.kind == TYPE_ENUM || t.kind == TYPE_MAP || t.kind == TYPE_VEC || t.kind == TYPE_CHAN ||
            t.kind == TYPE_ARR ||
            t.kind == TYPE_TUPLE ||
            t.kind == TYPE_SET || t.kind == TYPE_FN || t.kind == TYPE_PTR || t.kind == TYPE_RAWPTR;

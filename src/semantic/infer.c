@@ -550,6 +550,14 @@ bool type_compare(type_t dst, type_t src) {
         return true;
     }
 
+    // Allow enum type to be compared with its underlying type
+    if (dst.kind == TYPE_ENUM && src.kind == dst.enum_->underlying_type.kind) {
+        return true;
+    }
+    if (src.kind == TYPE_ENUM && dst.kind == src.enum_->underlying_type.kind) {
+        return true;
+    }
+
     if (dst.kind != src.kind) {
         return false;
     }
@@ -1342,6 +1350,7 @@ static type_t infer_match(module_t *m, ast_match_t *match, type_t target_type) {
     stack_push(m->current_fn->ret_target_types, &target_type);
 
     table_t *union_table = table_new(); // key is hash
+    table_t *enum_table = table_new(); // key is variant index
 
     bool has_default = false;
 
@@ -1373,6 +1382,12 @@ static type_t infer_match(module_t *m, ast_match_t *match, type_t target_type) {
                 table_set(union_table, itoa(type_hash(match_is_expr->target_type)), cond_expr);
             } else {
                 infer_right_expr(m, cond_expr, subject_type);
+                // enum 类型：记录已匹配的变体索引
+                if (subject_type.kind == TYPE_ENUM && cond_expr->assert_type == AST_EXPR_LITERAL) {
+                    ast_literal_t *literal = cond_expr->value;
+                    int variant_index = atoi(literal->value);
+                    table_set(enum_table, itoa(variant_index), cond_expr);
+                }
             }
         }
 
@@ -1383,6 +1398,21 @@ static type_t infer_match(module_t *m, ast_match_t *match, type_t target_type) {
     // default check
     if (!has_default) {
         do {
+            // enum 类型穷尽性检查
+            if (subject_type.kind == TYPE_ENUM && subject_type.enum_ != NULL) {
+                type_enum_t *enum_decl = subject_type.enum_;
+                for (int i = 0; i < enum_decl->variants->length; i++) {
+                    if (!table_exist(enum_table, itoa(i))) {
+                        enum_variant_t *variant = ct_list_value(enum_decl->variants, i);
+                        ANALYZER_ASSERTF(has_default,
+                                         "match expression lacks a default case '_' and enum variant '%s' is not covered",
+                                         variant->name)
+                    }
+                }
+                break; // enum completed
+            }
+
+            // union 类型穷尽性检查
             if (subject_type.kind == TYPE_UNION && !subject_type.union_->any) {
                 for (int i = 0; i < subject_type.union_->elements->length; i++) {
                     type_t *element_type = ct_list_value(subject_type.union_->elements, i);
@@ -1600,6 +1630,15 @@ static type_t infer_ident(module_t *m, ast_ident *ident) {
             INFER_ASSERTF(false, "generics fn `%s` cannot be passed as ident", fndef->fn_name)
         }
         return infer_fn_decl(m, fndef, type_kind_new(TYPE_UNKNOWN));
+    }
+
+    // 处理类型标识符 (struct, enum, etc.)
+    if (symbol->type == SYMBOL_TYPE) {
+        ast_typedef_stmt_t *typedef_stmt = symbol->ast_value;
+        type_t result = typedef_stmt->type_expr;
+        // 确保类型有正确的 ident (带 module 前缀)
+        result.ident = symbol->ident;
+        return result;
     }
 
     INFER_ASSERTF(false, "unable to recognize symbol type");
@@ -2112,6 +2151,49 @@ static type_t infer_select_expr(module_t *m, ast_expr_t *expr) {
         return p->type;
     }
 
+    // TYPE_ENUM 枚举成员访问处理
+    if (left_type.kind == TYPE_ENUM) {
+        // 查找枚举变体
+        type_enum_t *enum_decl = left_type.enum_;
+        enum_variant_t *variant = NULL;
+        for (int i = 0; i < enum_decl->variants->length; i++) {
+            enum_variant_t *v = ct_list_value(enum_decl->variants, i);
+            if (strcmp(v->name, select->key) == 0) {
+                variant = v;
+                break;
+            }
+        }
+        INFER_ASSERTF(variant, "enum %s has no variant '%s'", type_format(left_type), select->key);
+
+        // 重写为字面量
+        ast_literal_t *literal = NEW(ast_literal_t);
+        literal->enum_variant_name = variant->name;
+        literal->kind = variant->type.kind;
+        literal->len = 0;
+        if (variant->has_value) {
+            // 使用显式值
+            ast_expr_t *value_expr = (ast_expr_t *)variant->value;
+            if (value_expr->assert_type == AST_EXPR_LITERAL) {
+                ast_literal_t *variant_literal = value_expr->value;
+                literal->value = strdup(variant_literal->value);
+                literal->len = variant_literal->len;
+            } else {
+                // 运行时计算的值，暂不支持
+                INFER_ASSERTF(false, "enum variant with non-literal value not supported yet");
+            }
+        } else {
+            // 使用自动分配的索引值
+            char index_str[32];
+            snprintf(index_str, sizeof(index_str), "%d", variant->index);
+            literal->value = strdup(index_str);
+        }
+
+        expr->assert_type = AST_EXPR_LITERAL;
+        expr->value = literal;
+
+        return left_type;
+    }
+
     INFER_ASSERTF(false, "no field named '%s' found in type '%s'", select->key, type_format(select->left.type));
     exit(1);
 }
@@ -2293,9 +2375,11 @@ static bool impl_call_rewrite(module_t *m, ast_call_t *call) {
         return false;
     }
 
-    // must alloc in heap
-    INFER_ASSERTF(select_left_type.kind != TYPE_RAWPTR, "%s cannot use impl call",
-                  type_format(select_left_type));
+    // must alloc in heap, except for enum types which are stack-allocated
+    if (select_left_type.kind == TYPE_RAWPTR && destr_type.kind != TYPE_ENUM) {
+        INFER_ASSERTF(false, "%s cannot use impl call",
+                      type_format(select_left_type));
+    }
 
 
     // call 继承 select_left_type 的 args
@@ -2368,8 +2452,18 @@ static bool impl_call_rewrite(module_t *m, ast_call_t *call) {
 
 
     // self arg 可能在栈上分配，在 call fn 中会导致栈变量读取异常，所以需要确保 self arg 在堆上分配
-    if (is_stack_impl(self_arg->type.kind)) { // 基于原始类型计算是否需要 load ptr
+    // 检查原始类型是否需要在栈上分配
+    type_t self_type = self_arg->type;
+    if (self_type.kind == TYPE_PTR || self_type.kind == TYPE_RAWPTR) {
+        self_type = self_type.ptr->value_type;
+    }
+    // 对于 enum 类型，不需要进行 safe_load_addr，直接传递值即可
+    if (is_stack_impl(self_type.kind) && self_type.kind != TYPE_ENUM) { // 基于原始类型计算是否需要 load ptr
         self_arg = ast_safe_load_addr(self_arg); // safe_load_addr
+    } else if (self_type.kind == TYPE_ENUM) {
+        // 对于 enum 类型，解引用 rawptr/ptr 得到底层值
+        // 直接修改 self_arg 的类型为底层类型
+        self_arg->type = self_type;
     }
 
     ct_list_push(args, self_arg);
@@ -3342,6 +3436,11 @@ static type_t reduction_complex_type(module_t *m, type_t t) {
         return reduction_struct(m, t);
     }
 
+    // TYPE_ENUM 处理 - 枚举类型不需要 reduction，直接返回
+    if (t.kind == TYPE_ENUM) {
+        return t;
+    }
+
     INFER_ASSERTF(false, "unknown type=%s", type_format(t));
     exit(1);
 }
@@ -3834,7 +3933,8 @@ static type_t infer_fn_decl(module_t *m, ast_fndef_t *fndef, type_t target_type)
         param->type = reduction_type(m, param->type);
 
         // 为什么要在这里进行 ptr of, 只有在 infer 之后才能确定 alias 的具体类型，从而进一步判断是否需要 ptrof
-        if (fndef->impl_type.kind > 0 && i == 0 && is_stack_impl(param->type.kind)) {
+        // 只有 struct 类型需要转换为指针，enum 类型可以按值传递
+        if (fndef->impl_type.kind > 0 && i == 0 && param->type.kind == TYPE_STRUCT) {
             // struct to ptr
             param->type = type_ptrof(param->type);
         }

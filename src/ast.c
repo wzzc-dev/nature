@@ -50,6 +50,14 @@ static type_union_t *type_union_copy(module_t *m, type_union_t *temp) {
     return union_;
 }
 
+static type_enum_t *type_enum_copy(module_t *m, type_enum_t *temp) {
+    type_enum_t *enum_ = COPY_NEW(type_enum_t, temp);
+    enum_->ident = strdup(temp->ident);
+    // Note: variants are not copied as they are set during parsing
+    enum_->underlying_type = type_copy(m, temp->underlying_type);
+    return enum_;
+}
+
 static type_fn_t *type_fn_copy(module_t *m, type_fn_t *temp) {
     type_fn_t *fn = COPY_NEW(type_fn_t, temp);
     if (temp->fn_name) {
@@ -181,6 +189,10 @@ type_t type_copy(module_t *m, type_t temp) {
             type.interface = type_interface_copy(m, temp.interface);
             break;
         }
+        case TYPE_ENUM: {
+            type.enum_ = type_enum_copy(m, temp.enum_);
+            break;
+        }
         case TYPE_RAWPTR:
         case TYPE_PTR: {
             type.ptr = type_pointer_copy(m, temp.ptr);
@@ -210,6 +222,7 @@ static ast_ident *ast_ident_copy(ast_ident *temp) {
 static ast_literal_t *ast_literal_copy(ast_literal_t *temp) {
     ast_literal_t *literal = COPY_NEW(ast_literal_t, temp);
     literal->value = strdup(temp->value); // 根据实际情况复制，这里假设 value 是字符串
+    literal->enum_variant_name = temp->enum_variant_name ? strdup(temp->enum_variant_name) : NULL;
     return literal;
 }
 

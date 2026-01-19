@@ -437,6 +437,31 @@ static void analyzer_type(module_t *m, type_t *type) {
             }
         }
     }
+
+    if (type->kind == TYPE_ENUM) {
+        type_enum_t *enum_decl = type->enum_;
+
+        // Set the ident field if not already set
+        if (!type->ident) {
+            type->ident = enum_decl->ident;
+        }
+
+        // Analyze the underlying type
+        analyzer_type(m, &enum_decl->underlying_type);
+
+        // Analyze each variant
+        for (int i = 0; i < enum_decl->variants->length; ++i) {
+            enum_variant_t *variant = ct_list_value(enum_decl->variants, i);
+
+            // Set the variant type to the enum's underlying type
+            variant->type = enum_decl->underlying_type;
+
+            // If variant has an explicit value, analyze it
+            if (variant->has_value && variant->value) {
+                analyzer_expr(m, variant->value);
+            }
+        }
+    }
 }
 
 /**
@@ -1473,9 +1498,11 @@ static void analyzer_constant_folding(module_t *m, ast_expr_t *expr) {
 
             // 创建结果字面量
             ast_literal_t *result_literal = NEW(ast_literal_t);
+            result_literal->enum_variant_name = NULL;
             result_literal->kind = TYPE_STRING;
             result_literal->value = result_str;
             result_literal->len = total_len - 1; // 不包括 null terminator
+            result_literal->enum_variant_name = NULL;
 
             expr->assert_type = AST_EXPR_LITERAL;
             expr->value = result_literal;
@@ -1525,6 +1552,7 @@ static void analyzer_constant_folding(module_t *m, ast_expr_t *expr) {
                 if (can_fold) {
                     // 将二元表达式替换为浮点数常量字面量
                     ast_literal_t *result_literal = NEW(ast_literal_t);
+                    result_literal->enum_variant_name = NULL;
                     result_literal->kind = TYPE_FLOAT; // 默认使用 double 精度
                     result_literal->value = malloc(64);
                     snprintf(result_literal->value, 64, "%.17g", result); // 使用高精度格式
@@ -1585,6 +1613,7 @@ static void analyzer_constant_folding(module_t *m, ast_expr_t *expr) {
                 if (can_fold) {
                     // 将二元表达式替换为整数常量字面量
                     ast_literal_t *result_literal = NEW(ast_literal_t);
+                    result_literal->enum_variant_name = NULL;
                     result_literal->kind = TYPE_INT;
                     result_literal->value = malloc(32);
                     snprintf(result_literal->value, 32, "%ld", result);
@@ -1621,6 +1650,7 @@ static void analyzer_constant_folding(module_t *m, ast_expr_t *expr) {
                     if (can_fold) {
                         // 将一元表达式替换为浮点数常量字面量
                         ast_literal_t *result_literal = NEW(ast_literal_t);
+                        result_literal->enum_variant_name = NULL;
                         result_literal->kind = TYPE_FLOAT64;
                         result_literal->value = malloc(64);
                         snprintf(result_literal->value, 64, "%.17g", result);
@@ -1648,6 +1678,7 @@ static void analyzer_constant_folding(module_t *m, ast_expr_t *expr) {
                     if (can_fold) {
                         // 将一元表达式替换为整数常量字面量
                         ast_literal_t *result_literal = NEW(ast_literal_t);
+                        result_literal->enum_variant_name = NULL;
                         result_literal->kind = TYPE_INT;
                         result_literal->value = malloc(32);
                         snprintf(result_literal->value, 32, "%ld", result);
@@ -1662,6 +1693,7 @@ static void analyzer_constant_folding(module_t *m, ast_expr_t *expr) {
                 bool result = !operand_val;
 
                 ast_literal_t *result_literal = NEW(ast_literal_t);
+                result_literal->enum_variant_name = NULL;
                 result_literal->kind = TYPE_BOOL;
                 result_literal->value = result ? "true" : "false";
 
@@ -1824,6 +1856,12 @@ static void analyzer_typedef_stmt(module_t *m, ast_typedef_stmt_t *stmt) {
 
     local_ident_t *local = local_ident_new(m, SYMBOL_TYPE, stmt, stmt->ident);
     stmt->ident = local->unique_ident;
+
+    // 更新 type_expr 的 ident 以包含 module 前缀
+    if (stmt->type_expr.kind == TYPE_ENUM) {
+        stmt->type_expr.ident = local->unique_ident;
+        stmt->type_expr.enum_->ident = local->unique_ident;
+    }
 
     slice_push(m->ast_typedefs, stmt);
 }

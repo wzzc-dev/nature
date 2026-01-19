@@ -289,6 +289,7 @@ typedef struct {
     type_kind kind;
     char *value;
     int64_t len; // string 时 len
+    char *enum_variant_name; // enum 时存储变体名称
 } ast_literal_t; // 标量值
 
 // (xx, xx, xx)
@@ -792,6 +793,7 @@ static inline ast_expr_t *ast_int_expr(int line, int column, uint64_t number) {
     ast_literal_t *literal = NEW(ast_literal_t);
     literal->kind = TYPE_INT;
     literal->value = itoa(number);
+    literal->enum_variant_name = NULL;
     expr->value = literal;
     return expr;
 }
@@ -808,6 +810,7 @@ static inline ast_expr_t *ast_bool_expr(int line, int column, bool b) {
     } else {
         literal->value = "false";
     }
+    literal->enum_variant_name = NULL;
     expr->value = literal;
     return expr;
 }

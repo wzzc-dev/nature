@@ -675,7 +675,10 @@ static lir_operand_t *linear_var_decl(module_t *m, ast_var_decl_t *var_decl) {
     assert(s->type == SYMBOL_VAR);
     ast_var_decl_t *symbol_var = s->ast_value;
 
-    if (is_stack_ref_big_type(var_decl->type)) {
+    // Special handling for enum types with string underlying types
+    bool is_enum_with_string = (var_decl->type.kind == TYPE_ENUM && var_decl->type.enum_->underlying_type.kind == TYPE_STRING);
+    
+    if (is_stack_ref_big_type(var_decl->type) || is_enum_with_string) {
         if (symbol_var->type.in_heap) {
             uint64_t rtype_hash = type_hash(var->type);
             // 更新类型避免在 lower 被识别成 struct 进行 amd64 下的特殊值传递
@@ -1431,6 +1434,7 @@ static void linear_ret(module_t *m, ast_ret_stmt_t *stmt) {
         linear_expr(m, stmt->expr, target);
     }
 
+
     OP_PUSH(lir_op_new(LIR_OPCODE_RET, NULL, NULL, label));
     OP_PUSH(lir_op_bal(label));
 }
@@ -1923,6 +1927,46 @@ static lir_operand_t *linear_binary(module_t *m, ast_expr_t expr, lir_operand_t 
             }
         }
 
+        return target;
+    }
+
+    // Handle string enum comparisons with string literals
+    bool left_is_string_enum = binary_expr->left.type.kind == TYPE_ENUM
+            && binary_expr->left.type.enum_->underlying_type.kind == TYPE_STRING;
+    bool right_is_string_enum = binary_expr->right.type.kind == TYPE_ENUM
+            && binary_expr->right.type.enum_->underlying_type.kind == TYPE_STRING;
+
+    if ((left_is_string_enum && binary_expr->right.type.kind == TYPE_STRING)
+            || (right_is_string_enum && binary_expr->left.type.kind == TYPE_STRING)) {
+        switch (opcode) {
+            case LIR_OPCODE_SEE: {
+                push_rt_call(m, RT_CALL_STRING_EE, target, 2, left_target, right_target);
+                break;
+            }
+            case LIR_OPCODE_SNE: {
+                push_rt_call(m, RT_CALL_STRING_NE, target, 2, left_target, right_target);
+                break;
+            }
+            case LIR_OPCODE_SGT: {
+                push_rt_call(m, RT_CALL_STRING_GT, target, 2, left_target, right_target);
+                break;
+            }
+            case LIR_OPCODE_SGE: {
+                push_rt_call(m, RT_CALL_STRING_GE, target, 2, left_target, right_target);
+                break;
+            }
+            case LIR_OPCODE_SLT: {
+                push_rt_call(m, RT_CALL_STRING_LT, target, 2, left_target, right_target);
+                break;
+            }
+            case LIR_OPCODE_SLE: {
+                push_rt_call(m, RT_CALL_STRING_LE, target, 2, left_target, right_target);
+                break;
+            }
+            default: {
+                assertf(false, "not support string enum operator %d", ast_expr_op_str[binary_expr->op]);
+            }
+        }
         return target;
     }
 
@@ -3098,6 +3142,11 @@ static lir_operand_t *linear_match_expr(module_t *m, ast_expr_t expr, lir_operan
     stack_pop(m->current_closure->ret_labels);
     stack_pop(m->current_closure->ret_targets);
 
+    // 如果 match 有返回值, 则生成 return 指令
+    if (has_ret) {
+        OP_PUSH(lir_op_new(LIR_OPCODE_RETURN, target, NULL, NULL));
+    }
+
     return target;
 }
 
@@ -3217,6 +3266,29 @@ static void linear_try_catch_stmt(module_t *m, ast_try_catch_stmt_t *try_stmt) {
  */
 static lir_operand_t *linear_literal(module_t *m, ast_expr_t expr, lir_operand_t *target) {
     ast_literal_t *literal = expr.value;
+    
+    // Handle enum literals with string underlying type
+    // When expr.type is TYPE_ENUM but literal->kind is TYPE_STRING,
+    // we need to create a string object for the enum value
+    if (expr.type.kind == TYPE_ENUM && literal->kind == TYPE_STRING) {
+        // Create a temporary variable to hold the string object
+        type_t string_type = type_kind_new(TYPE_STRING);
+        lir_operand_t *string_temp = temp_var_operand(m, string_type);
+        
+        // Create the string object and store it in the temporary variable
+        lir_operand_t *imm_c_string_operand = string_operand(literal->value, literal->len);
+        lir_operand_t *imm_len_operand = int_operand(literal->len);
+        push_rt_call(m, RT_CALL_STRING_NEW_WITH_POOL, string_temp, 2, imm_c_string_operand, imm_len_operand);
+        
+        // If target is provided, move the string object pointer to the target
+        if (target) {
+            OP_PUSH(lir_op_move(target, string_temp));
+            return target;
+        }
+        
+        return string_temp;
+    }
+    
     if (literal->kind == TYPE_STRING) {
         if (!target) {
             target = temp_var_operand(m, expr.type);
@@ -3593,7 +3665,7 @@ static lir_operand_t *linear_expr(module_t *m, ast_expr_t expr, lir_operand_t *t
 
     // 特殊处理
     linear_expr_fn fn = expr_fn_table[expr.assert_type];
-    assertf(fn, "ast right not support");
+    assertf(fn, "ast right not support, assert_type=%d", expr.assert_type);
 
     return fn(m, expr, target);
 }

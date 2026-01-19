@@ -105,6 +105,7 @@ typedef enum {
     TOKEN_VOID,
     TOKEN_ANY,
     TOKEN_STRUCT,
+    TOKEN_ENUM,
     TOKEN_INTERFACE,
     TOKEN_THROW,
     TOKEN_TRY,
@@ -208,6 +209,7 @@ static string token_str[] = {
         [TOKEN_VOID] = "void",
         [TOKEN_ANY] = "any",
         [TOKEN_STRUCT] = "struct",
+        [TOKEN_ENUM] = "enum",
 
         [TOKEN_FOR] = "for",
         [TOKEN_IN] = "in",
